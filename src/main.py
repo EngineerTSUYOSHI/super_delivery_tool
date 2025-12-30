@@ -35,6 +35,27 @@ def save_to_excel_sheet(results, company_name, output_file):
     
     print(f"    -> [{sheet_name}] シートに {len(results)} 行を追記しました。")
 
+def scrape_worker(url_chunk, worker_id, auth_state_path):
+    """個別のブラウザを立ち上げて、割り当てられたURLを処理する"""
+    print(f"    [Worker-{worker_id}] 起動中... {len(url_chunk)}件担当")
+    
+    worker_scraper = SuperDeliveryScraper()
+    # 保存したログイン状態（auth_state.json）を読み込んでスタート
+    worker_scraper.start(auth_state=auth_state_path)
+    
+    results = []
+    for url in url_chunk:
+        try:
+            variations = worker_scraper.scrape_product_detail(url)
+            if variations:
+                results.extend(variations)
+            time.sleep(1.5) # 並列時は少し長めに休む
+        except Exception as e:
+            print(f"    [Worker-{worker_id}] Error at {url}: {e}")
+            
+    worker_scraper.close()
+    return results
+
 
 def main():
     # 1. 設定とパスの準備
@@ -42,6 +63,7 @@ def main():
     input_file = os.path.join(BASE_DIR, "input.xlsx")
     output_dir = os.path.join(BASE_DIR, "output")
     url_data_dir = os.path.join(BASE_DIR, "data", "urls") # URLテキストの保存先
+    auth_state_path = os.path.join(BASE_DIR, "auth_state.json")
 
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -56,14 +78,13 @@ def main():
     # A列:会社名, B列:URL (ヘッダなし)
     df_input = pd.read_excel(input_file, header=None)
 
+    user_id = os.getenv("SD_USER_ID")
+    password = os.getenv("SD_PASSWORD")
     # 3. スクレイピング開始
-    scraper = SuperDeliveryScraper()
-    scraper.start()
-
-    # ログインは必要になったらコメントアウトを外す
-    # user_id = os.getenv("SD_USER_ID")
-    # password = os.getenv("SD_PASSWORD")
-    # scraper.login(user_id, password)
+    master_scraper = SuperDeliveryScraper()
+    master_scraper.start()
+    if master_scraper.login(user_id, password):
+        master_scraper.save_auth_state("auth_state.json")
 
     try:
         # --- ステップ1: 各会社の全商品URLをテキストに保存 ---
@@ -74,44 +95,48 @@ def main():
             
             print(f"\n=== [URL収集] {comp_name} ===")
             # collector.pyのsave_product_urlsを呼び出し（内部でファイル保存される）
-            url_file_path = scraper.save_product_urls(comp_name, b_url)
+            
+            url_file_path = master_scraper.save_product_urls(comp_name, b_url)
             company_tasks.append((comp_name, url_file_path))
+        master_scraper.close()
 
         # --- ステップ2: 保存したテキストを読み込んで詳細を取得 ---
         for comp_name, url_file in company_tasks:
-            if not os.path.exists(url_file):
-                continue
-                
-            print(f"\n=== [詳細取得] {comp_name} ===")
+            if not os.path.exists(url_file): continue
+            print(f"\n=== [詳細取得・並列] {comp_name} ===")
             
             with open(url_file, 'r', encoding='utf-8') as f:
-                urls = [line.strip() for line in f if line.strip()]
+                all_urls = [line.strip() for line in f if line.strip()]
 
-            total_urls = len(urls)
-            batch_size = 1000 # 1000URLごとにExcelへ書き出し
-            
-            for i in range(0, total_urls, batch_size):
-                batch_urls = urls[i:i + batch_size]
-                batch_results = []
+            # --- ここでURLリストを分割する！ ---
+            num_workers = 2
+            chunk_size = (len(all_urls) + num_workers - 1) // num_workers
+            chunks = [all_urls[i:i + chunk_size] for i in range(0, len(all_urls), chunk_size)]
+
+            # 1000件ずつとかではなく、分割した塊ごとに並列で投げる
+            with ProcessPoolExecutor(max_workers=num_workers) as executor:
+                # 2つのワーカーに、それぞれ分割したURLリストを渡す
+                futures = []
+                for idx, chunk in enumerate(chunks):
+                    futures.append(executor.submit(scrape_worker, chunk, idx, auth_state_path))
                 
-                print(f"  バッチ処理中: {i+1}〜{min(i+batch_size, total_urls)} / 全{total_urls}URL")
+                # 全ワーカーの結果を待機して結合
+                combined_results = []
+                for f in futures:
+                    combined_results.extend(f.result())
                 
-                for url in batch_urls:
-                    # バリエーション対応済みのリストが返ってくる
-                    variations = scraper.scrape_product_detail(url)
-                    if variations:
-                        batch_results.extend(variations)
-                    
-                    time.sleep(1) # サーバー負荷対策
-                
-                # 1000URL分のデータが溜まったらExcelシートに追記
-                if batch_results:
-                    save_to_excel_sheet(batch_results, comp_name, output_file)
+                # まとめてExcel保存
+                if combined_results:
+                    save_to_excel_sheet(combined_results, comp_name, output_file)
             
     except Exception as e:
         print(f"致命的なエラーが発生しました: {e}")
     finally:
-        scraper.close()
+        if 'master_scraper' in locals():
+            try:
+                master_scraper.close()
+            except:
+                pass
         print(f"\n全工程が完了しました。出力先: {output_file}")
 
 if __name__ == "__main__":

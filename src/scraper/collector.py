@@ -14,14 +14,19 @@ class SuperDeliveryScraper:
         self.context = None
         self.page = None
 
-    def start(self):
+    def start(self, auth_state=None):
         print("ブラウザを起動しています...")
         self.pw = sync_playwright().start()
         self.browser = self.pw.chromium.launch(
-            headless=False,
+            headless=True,
             args=["--disable-blink-features=AutomationControlled"]
         )
-        self.context = self.browser.new_context()
+        if auth_state and os.path.exists(auth_state):
+            print(f"認証情報を読み込んでいます: {auth_state}")
+            self.context = self.browser.new_context(storage_state=auth_state)
+        else:
+            self.context = self.browser.new_context()
+
         self.page = self.context.new_page()
 
         # 外部ライブラリを使わず、直接「ボットじゃないよ」という証拠を刻む
