@@ -1,0 +1,15 @@
+# Python
+__pycache__/
+*.py[cod]
+venv/
+
+# Build
+dist/
+build/
+*.spec
+
+# Data (クライアントの情報や個人情報が漏れないように)
+input.xlsx
+output/
+*.log
+.env
