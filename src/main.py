@@ -42,7 +42,6 @@ def scrape_worker(url_chunk, worker_id, auth_state_path):
     worker_scraper = SuperDeliveryScraper()
     # 保存したログイン状態（auth_state.json）を読み込んでスタート
     worker_scraper.start(auth_state=auth_state_path)
-    
     results = []
     for url in url_chunk:
         try:
@@ -63,7 +62,7 @@ def main():
     input_file = os.path.join(BASE_DIR, "input.xlsx")
     output_dir = os.path.join(BASE_DIR, "output")
     url_data_dir = os.path.join(BASE_DIR, "data", "urls") # URLテキストの保存先
-    auth_state_path = os.path.join(BASE_DIR, "auth_state.json")
+    auth_state_path = os.path.join(BASE_DIR, "src", "auth_state.json")
 
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
@@ -84,6 +83,7 @@ def main():
     master_scraper = SuperDeliveryScraper()
     master_scraper.start()
     if master_scraper.login(user_id, password):
+        time.sleep(5)  # ログイン後の安定化待ち
         master_scraper.save_auth_state("auth_state.json")
 
     try:
@@ -109,7 +109,7 @@ def main():
                 all_urls = [line.strip() for line in f if line.strip()]
 
             # --- ここでURLリストを分割する！ ---
-            num_workers = 2
+            num_workers = 4
             chunk_size = (len(all_urls) + num_workers - 1) // num_workers
             chunks = [all_urls[i:i + chunk_size] for i in range(0, len(all_urls), chunk_size)]
 

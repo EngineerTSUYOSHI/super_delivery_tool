@@ -1,10 +1,10 @@
 import time
 from playwright.sync_api import sync_playwright, TimeoutError
-from playwright_stealth import Stealth
 import asyncio
 import math
 import re
 import os
+import random
 
 class SuperDeliveryScraper:
     def __init__(self):
@@ -44,15 +44,13 @@ class SuperDeliveryScraper:
             # IDとパスワードを入力（locatorを使ってスマートに）
             self.page.locator('input[name="identification"]').fill(user_id)
             self.page.locator('input[name="password"]').fill(password)
-
-            print("ここで止まります。手動でログインボタンを押してみてください。")
-            self.page.pause() # これを入れるとブラウザが一時停止し、デバッグツールが開く
             
             # ログインボタンをクリック
             self.page.get_by_role("button", name="ログイン").click()
 
             # ログイン後の遷移を待つ
             self.page.wait_for_load_state("networkidle")
+            self.page.screenshot(path="after_login.png")
             
             # 成功判定：URLが変わったか、あるいは「ログアウト」ボタンが出現したかなどで判断
             if "login" in self.page.url:
@@ -109,9 +107,9 @@ class SuperDeliveryScraper:
     def save_product_urls(self, company_name, base_url):
         """全ページのURLを収集し、会社名ごとのテキストファイルに保存する"""
         max_pages = self.get_max_pages(base_url)
-        if max_pages > 5:
-            max_pages = 5  # テスト用に最大5ページまでに制限
-        
+        if max_pages > 9:
+            max_pages = 9  # テスト用に最大9ページまでに制限
+
         # 会社名ごとの保存ディレクトリ作成
         output_dir = f"data/urls/{company_name}"
         os.makedirs(output_dir, exist_ok=True)
@@ -174,26 +172,7 @@ class SuperDeliveryScraper:
                     
         print(f"商品URLを {len(urls)} 件取得しました。")
         return urls
-    
-    def scrape_product_detail(self, url):
-        try:
-            self.page.goto(url)
-            self.page.wait_for_load_state("networkidle")
 
-            # 各項目の抽出（セレクタは実際のHTMLに合わせて調整が必要）
-            data = {
-                "商品名": self.get_text('.product-title'),
-                "商品名2": self.get_text('.product-subtitle'), # 無ければ空
-                "JANコード": self.get_text('.jan-code'),       # Null許容
-                "型番": self.get_text('.model-number'),
-                "価格": self.get_text('.retail-price'),        # とりあえず小売価格
-                "詳細画面URL": url
-            }
-            return data
-        except Exception as e:
-            print(f"Error scraping {url}: {e}")
-            return None
-        
     def get_text(self, selector):
         """要素が存在すればテキストを返し、なければNoneを返す補助関数"""
         try:
@@ -203,3 +182,125 @@ class SuperDeliveryScraper:
         except:
             pass
         return None
+        
+    def scrape_product_detail(self, url):
+        try:
+            # networkidleでJSの実行完了を待つ
+            self.page.goto(url, timeout=60000, wait_until="networkidle")
+            time.sleep(random.uniform(2.0, 5.0))
+            self.page.screenshot(path="debug_check.png")
+            
+            # h1が出るまで待つ
+            self.page.wait_for_selector('h1', timeout=20000)
+            
+            product_name = self.get_text_safe('h1')
+            variation_results = []
+
+            # 1. まず、バリエーションの起点となる「data-product-set-code」を持っている行をすべて探す
+            # クラス名に頼らず、属性 [data-product-set-code] がある tr を探すのが最も確実
+            rows = self.page.locator('tr[data-product-set-code]').all()
+            
+            # もし上記で取れない場合は、以前動いていた ts-tr02 を使う
+            if not rows:
+                rows = self.page.locator('tr.ts-tr02').all()
+
+            print(f"    -> 抽出対象の行数: {len(rows)}")
+
+            for row in rows:
+                # 1. 詳細情報の取得
+                detail_cell = row.locator('.td-set-detail')
+                if detail_cell.count() == 0:
+                    continue # 詳細セルがない行は飛ばす
+
+                name2_raw = detail_cell.inner_text().strip()
+                
+                # JAN/型番抽出
+                jan_code = ""
+                jan_elem = detail_cell.locator('.td-jan')
+                if jan_elem.count() > 0:
+                    jan_code = "".join(re.findall(r'\d+', jan_elem.inner_text()))
+
+                model_match = re.search(r'（(.*?)）', name2_raw)
+                model_number = model_match.group(1) if model_match else ""
+                name2 = name2_raw.split('（')[0].strip()
+
+                # --- 2. 卸価格（仕入れ価格）の取得 ---
+                wholesale_price = "未取得"
+                
+                # パターンA: 行(row)の中に直接価格がある場合 (スマホ表示 or 一部の商品)
+                price_elem = row.locator('.maker-wholesale-set-price')
+                
+                # パターンB: rowの中にない場合、この行の「直後の行」を探す (PC表示の3行構造対策)
+                # row.xpath("following-sibling::tr") のような動きをPlaywrightのセレクタで行う
+                if price_elem.count() == 0:
+                    # このrowの直近の兄弟要素にある価格を探す
+                    price_elem = self.page.locator('tr.co-pc-only .maker-wholesale-set-price').first
+
+                # それでもダメなら、rowの親要素(tbody)からこの商品のセット価格を絞り込む
+                # 今回はもっとシンプルに「rowの中から最初に見つかる価格」を徹底的に探す
+                
+                # text_contentで中身を確認
+                target_price_locator = row.locator('.maker-wholesale-set-price').first
+                
+                # 【重要】もしrowの中に価格がないなら、その周辺(次の行など)を探索
+                if target_price_locator.count() == 0:
+                     # ログイン状態なら、必ずどこかに .td-price02 (卸単価) か 
+                     # .maker-wholesale-set-price があるはずです
+                     # rowの直後にある価格要素を特定
+                     target_price_locator = self.page.locator('.maker-wholesale-set-price').first # 仮
+
+                # 最終手段：価格が取れるまでリトライ気味に取得
+                # inner_html等で中身を全スキャンして数字を拾う
+                raw_text = row.inner_text()
+                # 卸価格の数値（&yen;の後の数字）を正規表現で強引に拾う
+                price_candidates = re.findall(r'¥\s*([0-9,]+)', row.page.content()) 
+                
+                # --- 最も確実な修正案：row.get_attributeに頼らない ---
+                # HTML構造から「卸単価」の文字の隣にある数字を狙う
+                price_locator = row.locator('xpath=./following-sibling::tr//td[contains(@class, "td-price02")] | .//span[contains(@class, "maker-wholesale-set-price")]').first
+
+                if price_locator.count() > 0:
+                    price_raw = price_locator.text_content()
+                    price_match = re.search(r'([0-9,]+)', price_raw)
+                    if price_match:
+                        wholesale_price = price_match.group(1).replace(',', '')
+
+                variation_results.append({
+                    "商品名": product_name,
+                    "商品名2": name2,
+                    "JANコード": jan_code,
+                    "型番": model_number,
+                    "価格": wholesale_price,
+                    "詳細画面URL": url
+                })
+
+            return variation_results
+        except Exception as e:
+            print(f"  [Error] {url}: {e}")
+            return []
+
+    def get_text_safe(self, selector):
+        try:
+            element = self.page.locator(selector).first
+            return element.inner_text().strip() if element.count() > 0 else ""
+        except:
+            return ""
+
+    def extract_model_number(self):
+        # 「商品名2」の中からカッコ内の数字を抜くロジック例
+        text = self.get_text_safe('.item-sub-title')
+        match = re.search(r'（(\d+)）', text)
+        return match.group(1) if match else ""
+
+    def extract_jan_code(self):
+        # JANコードが「JANコード：45xxxx」のように書かれている場合
+        try:
+            text = self.page.locator(r'text=/JANコード：\d+/').first.inner_text()
+            return re.search(r'\d+', text).group()
+        except:
+            return ""
+        
+    def save_auth_state(self, file_path="auth_state.json"):
+        """ログイン状態をJSONファイルに保存する"""
+        self.context.storage_state(path=file_path)
+        print(f"Auth state saved to {file_path}")
