@@ -1,6 +1,5 @@
 import time
-from playwright.sync_api import sync_playwright, TimeoutError
-import asyncio
+from playwright.sync_api import sync_playwright
 import math
 import re
 import os
@@ -107,8 +106,8 @@ class SuperDeliveryScraper:
     def save_product_urls(self, company_name, base_url):
         """全ページのURLを収集し、会社名ごとのテキストファイルに保存する"""
         max_pages = self.get_max_pages(base_url)
-        if max_pages > 9:
-            max_pages = 9  # テスト用に最大9ページまでに制限
+        if max_pages > 10:
+            max_pages = 10  # テスト用に最大9ページまでに制限
 
         # 会社名ごとの保存ディレクトリ作成
         output_dir = f"data/urls/{company_name}"
@@ -184,119 +183,92 @@ class SuperDeliveryScraper:
         return None
         
     def scrape_product_detail(self, url):
-        try:
-            # networkidleでJSの実行完了を待つ
-            self.page.goto(url, timeout=60000, wait_until="networkidle")
-            time.sleep(random.uniform(2.0, 5.0))
-            self.page.screenshot(path="debug_check.png")
-            
-            # h1が出るまで待つ
-            self.page.wait_for_selector('h1', timeout=20000)
-            
-            product_name = self.get_text_safe('h1')
-            variation_results = []
-
-            # 1. まず、バリエーションの起点となる「data-product-set-code」を持っている行をすべて探す
-            # クラス名に頼らず、属性 [data-product-set-code] がある tr を探すのが最も確実
-            rows = self.page.locator('tr[data-product-set-code]').all()
-            
-            # もし上記で取れない場合は、以前動いていた ts-tr02 を使う
-            if not rows:
-                rows = self.page.locator('tr.ts-tr02').all()
-
-            print(f"    -> 抽出対象の行数: {len(rows)}")
-
-            for row in rows:
-                # 1. 詳細情報の取得
-                detail_cell = row.locator('.td-set-detail')
-                if detail_cell.count() == 0:
-                    continue # 詳細セルがない行は飛ばす
-
-                name2_raw = detail_cell.inner_text().strip()
+        max_retries = 3
+        for attempt in range(max_retries):
+            try:
+                # wait_until="domcontentloaded" で高速化
+                self.page.goto(url, wait_until="domcontentloaded", timeout=30000)
                 
-                # JAN/型番抽出
-                jan_code = ""
-                jan_elem = detail_cell.locator('.td-jan')
-                if jan_elem.count() > 0:
-                    jan_code = "".join(re.findall(r'\d+', jan_elem.inner_text()))
-
-                model_match = re.search(r'（(.*?)）', name2_raw)
-                model_number = model_match.group(1) if model_match else ""
-                name2 = name2_raw.split('（')[0].strip()
-
-                # --- 2. 卸価格（仕入れ価格）の取得 ---
-                wholesale_price = "未取得"
+                # メンテナンス画面が出た場合の即時判定
+                if "メンテナンス中" in self.page.content():
+                    wait_time = 20
+                    print(f"      [Wait] 制限検知。{wait_time}秒待機してリトライします({attempt+1}/{max_retries})")
+                    time.sleep(wait_time)
+                    continue  # ループの先頭に戻ってリトライ
+                self.page.screenshot(path="debug_no_data.png", full_page=True)
                 
-                # パターンA: 行(row)の中に直接価格がある場合 (スマホ表示 or 一部の商品)
-                price_elem = row.locator('.maker-wholesale-set-price')
+                # --- ここからが正常時の処理（ループを抜けるための成功ルート） ---
                 
-                # パターンB: rowの中にない場合、この行の「直後の行」を探す (PC表示の3行構造対策)
-                # row.xpath("following-sibling::tr") のような動きをPlaywrightのセレクタで行う
-                if price_elem.count() == 0:
-                    # このrowの直近の兄弟要素にある価格を探す
-                    price_elem = self.page.locator('tr.co-pc-only .maker-wholesale-set-price').first
+                # h1が出るまで待つ（これが通ればページが正常に表示されている証拠）
+                try:
+                    self.page.wait_for_selector('h1', timeout=15000)
+                except:
+                    print(f"      [Retry] h1が見つかりません。リトライします。")
+                    continue
 
-                # それでもダメなら、rowの親要素(tbody)からこの商品のセット価格を絞り込む
-                # 今回はもっとシンプルに「rowの中から最初に見つかる価格」を徹底的に探す
+                product_name = self.get_text_safe('h1')
+                variation_results = []
+
+                # 商品行の特定
+                rows = self.page.locator('tr[data-product-set-code]').all()
+                print(f"    -> 抽出対象の行数: {len(rows)}")
+
+                for row in rows:
+                    detail_cell = row.locator('.td-set-detail')
+                    if detail_cell.count() == 0:
+                        continue
+
+                    name2_raw = detail_cell.inner_text().strip()
+                    
+                    # JAN/型番抽出
+                    jan_code = ""
+                    jan_elem = detail_cell.locator('.td-jan')
+                    if jan_elem.count() > 0:
+                        jan_code = "".join(re.findall(r'\d+', jan_elem.inner_text()))
+
+                    model_match = re.search(r'（(.*?)）', name2_raw)
+                    model_number = model_match.group(1) if model_match else ""
+                    name2 = name2_raw.split('（')[0].strip()
+
+                    # --- 卸価格の取得（修正されたパス） ---
+                    wholesale_price = "未取得"
+                    
+                    # 行内、または直後の要素から価格を探す
+                    # ログイン済みなら .td-price02 などのクラスがあるはず
+                    price_locator = row.locator('xpath=./following-sibling::tr//td[contains(@class, "td-price02")] | .//span[contains(@class, "maker-wholesale-set-price")] | .//td[contains(@class, "td-price02")]').first
+
+                    if price_locator.count() > 0:
+                        price_raw = price_locator.text_content()
+                        price_match = re.search(r'([0-9,]+)', price_raw)
+                        if price_match:
+                            wholesale_price = price_match.group(1).replace(',', '')
+
+                    variation_results.append({
+                        "商品名": product_name,
+                        "商品名2": name2,
+                        "JANコード": jan_code,
+                        "型番": model_number,
+                        "価格": wholesale_price,
+                        "詳細画面URL": url
+                    })
                 
-                # text_contentで中身を確認
-                target_price_locator = row.locator('.maker-wholesale-set-price').first
-                
-                # 【重要】もしrowの中に価格がないなら、その周辺(次の行など)を探索
-                if target_price_locator.count() == 0:
-                     # ログイン状態なら、必ずどこかに .td-price02 (卸単価) か 
-                     # .maker-wholesale-set-price があるはずです
-                     # rowの直後にある価格要素を特定
-                     target_price_locator = self.page.locator('.maker-wholesale-set-price').first # 仮
+                # すべて正常に終わったらランダム待機して結果を返却（ここで関数終了）
+                time.sleep(random.uniform(2.0, 4.0))
+                return variation_results
 
-                # 最終手段：価格が取れるまでリトライ気味に取得
-                # inner_html等で中身を全スキャンして数字を拾う
-                raw_text = row.inner_text()
-                # 卸価格の数値（&yen;の後の数字）を正規表現で強引に拾う
-                price_candidates = re.findall(r'¥\s*([0-9,]+)', row.page.content()) 
-                
-                # --- 最も確実な修正案：row.get_attributeに頼らない ---
-                # HTML構造から「卸単価」の文字の隣にある数字を狙う
-                price_locator = row.locator('xpath=./following-sibling::tr//td[contains(@class, "td-price02")] | .//span[contains(@class, "maker-wholesale-set-price")]').first
-
-                if price_locator.count() > 0:
-                    price_raw = price_locator.text_content()
-                    price_match = re.search(r'([0-9,]+)', price_raw)
-                    if price_match:
-                        wholesale_price = price_match.group(1).replace(',', '')
-
-                variation_results.append({
-                    "商品名": product_name,
-                    "商品名2": name2,
-                    "JANコード": jan_code,
-                    "型番": model_number,
-                    "価格": wholesale_price,
-                    "詳細画面URL": url
-                })
-
-            return variation_results
-        except Exception as e:
-            print(f"  [Error] {url}: {e}")
-            return []
+            except Exception as e:
+                print(f"      [Error] Attempt {attempt+1} failed: {e}")
+                time.sleep(5)
+                # ループの最後なら空を返して終了、そうでなければ次へ
+                if attempt == max_retries - 1:
+                    return []
+                    
+        return [] # すべての試行が失敗した場合
 
     def get_text_safe(self, selector):
         try:
             element = self.page.locator(selector).first
             return element.inner_text().strip() if element.count() > 0 else ""
-        except:
-            return ""
-
-    def extract_model_number(self):
-        # 「商品名2」の中からカッコ内の数字を抜くロジック例
-        text = self.get_text_safe('.item-sub-title')
-        match = re.search(r'（(\d+)）', text)
-        return match.group(1) if match else ""
-
-    def extract_jan_code(self):
-        # JANコードが「JANコード：45xxxx」のように書かれている場合
-        try:
-            text = self.page.locator(r'text=/JANコード：\d+/').first.inner_text()
-            return re.search(r'\d+', text).group()
         except:
             return ""
         

@@ -3,9 +3,9 @@ import pandas as pd
 from datetime import datetime
 from dotenv import load_dotenv
 from scraper.collector import SuperDeliveryScraper
-from concurrent.futures import ProcessPoolExecutor
 import time
-import re
+import cProfile
+import pstats
 
 # .envの読み込み
 load_dotenv()
@@ -35,22 +35,30 @@ def save_to_excel_sheet(results, company_name, output_file):
     
     print(f"    -> [{sheet_name}] シートに {len(results)} 行を追記しました。")
 
-def scrape_worker(url_chunk, worker_id, auth_state_path):
-    """個別のブラウザを立ち上げて、割り当てられたURLを処理する"""
-    print(f"    [Worker-{worker_id}] 起動中... {len(url_chunk)}件担当")
-    
+def scrape_worker(url_list, auth_state_path):
+    """1つのブラウザを立ち上げて、URLを順番に処理する"""
+    print(f"起動中... {len(url_list)}件を順番に処理します")
+
     worker_scraper = SuperDeliveryScraper()
-    # 保存したログイン状態（auth_state.json）を読み込んでスタート
+    # ログイン状態を読み込んでブラウザを起動
     worker_scraper.start(auth_state=auth_state_path)
+    
     results = []
-    for url in url_chunk:
+    for i, url in enumerate(url_list, start=1):
         try:
+            # 1. 詳細情報を取得
             variations = worker_scraper.scrape_product_detail(url)
             if variations:
                 results.extend(variations)
-            time.sleep(1.5) # 並列時は少し長めに休む
+            
+            # 2. 進捗を表示（1ワーカーだと順番に表示されるので見やすい）
+            if i % 10 == 0:
+                print(f"進捗: {i}/{len(url_list)} 件完了...")
+
         except Exception as e:
-            print(f"    [Worker-{worker_id}] Error at {url}: {e}")
+            print(f"Error at {url}: {e}")
+            # エラー時も少し休む（連続エラーによる負荷を防ぐ）
+            time.sleep(5)
             
     worker_scraper.close()
     return results
@@ -61,7 +69,6 @@ def main():
     BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))    
     input_file = os.path.join(BASE_DIR, "input.xlsx")
     output_dir = os.path.join(BASE_DIR, "output")
-    url_data_dir = os.path.join(BASE_DIR, "data", "urls") # URLテキストの保存先
     auth_state_path = os.path.join(BASE_DIR, "src", "auth_state.json")
 
     if not os.path.exists(output_dir):
@@ -102,32 +109,20 @@ def main():
 
         # --- ステップ2: 保存したテキストを読み込んで詳細を取得 ---
         for comp_name, url_file in company_tasks:
-            if not os.path.exists(url_file): continue
-            print(f"\n=== [詳細取得・並列] {comp_name} ===")
+            print(f"\n=== [詳細取得・直列] {comp_name} ===")
             
             with open(url_file, 'r', encoding='utf-8') as f:
                 all_urls = [line.strip() for line in f if line.strip()]
 
-            # --- ここでURLリストを分割する！ ---
-            num_workers = 4
-            chunk_size = (len(all_urls) + num_workers - 1) // num_workers
-            chunks = [all_urls[i:i + chunk_size] for i in range(0, len(all_urls), chunk_size)]
-
-            # 1000件ずつとかではなく、分割した塊ごとに並列で投げる
-            with ProcessPoolExecutor(max_workers=num_workers) as executor:
-                # 2つのワーカーに、それぞれ分割したURLリストを渡す
-                futures = []
-                for idx, chunk in enumerate(chunks):
-                    futures.append(executor.submit(scrape_worker, chunk, idx, auth_state_path))
-                
-                # 全ワーカーの結果を待機して結合
-                combined_results = []
-                for f in futures:
-                    combined_results.extend(f.result())
-                
-                # まとめてExcel保存
-                if combined_results:
-                    save_to_excel_sheet(combined_results, comp_name, output_file)
+            print(f"総件数: {len(all_urls)} 件の処理を開始します...")
+            
+            # 1ワーカー（直列）で実行。引数にリスト全体を渡す
+            results = scrape_worker(all_urls, auth_state_path)
+            
+            # 取得した結果をExcel保存
+            if results:
+                save_to_excel_sheet(results, comp_name, output_file)
+                print(f"-> {comp_name} のデータを保存しました。")
             
     except Exception as e:
         print(f"致命的なエラーが発生しました: {e}")
@@ -140,4 +135,18 @@ def main():
         print(f"\n全工程が完了しました。出力先: {output_file}")
 
 if __name__ == "__main__":
-    main()
+    profiler = cProfile.Profile()
+    profiler.enable()
+    
+    try:
+        main()
+    finally:
+        profiler.disable()
+        # バイナリ形式で保存（後で解析可能）
+        profiler.dump_stats("profile_results.prof")
+        
+        # 同時にテキスト形式でも人間が見やすいように書き出す
+        with open("profile_summary.txt", "w") as f:
+            stats = pstats.Stats(profiler, stream=f).sort_stats('cumulative')
+            stats.print_stats()
+        print("プロファイル結果を保存しました（profile_results.prof / profile_summary.txt）")
