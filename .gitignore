@@ -13,3 +13,6 @@ input.xlsx
 output/
 *.log
 .env
+
+src/auth_state.json
+tmp/
