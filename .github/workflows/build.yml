@@ -1,0 +1,46 @@
+name: Build Windows EXE
+
+on:
+  push:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Set up Python
+      uses: actions/setup-python@v5
+      with:
+        python-version: '3.12'
+        cache: 'pip'
+
+    - name: Install dependencies
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+
+    - name: Install Playwright Browsers
+      # Playwrightをexeに含めるため、ブラウザ本体のインストールが必要
+      run: |
+        playwright install chromium
+
+    - name: Build EXE
+      # 1. 実行ファイルが src/main.py なのでパスを指定
+      # 2. --paths で src を含めることでインポートエラーを防止
+      # 3. --collect-all で Playwright 関連の依存ファイルを強制収集
+      run: |
+        pyinstaller --onefile --noconsole `
+          --paths src `
+          --collect-all playwright_stealth `
+          --name "SuperDeliveryScraper" `
+          src/main.py
+
+    - name: Upload Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: scraping-tool-windows
+        path: dist/SuperDeliveryScraper.exe
