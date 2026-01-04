@@ -1,7 +1,5 @@
 import os
-# Playwrightがブラウザを探す場所を、システムの標準フォルダに固定する
-# これがないと、PyInstallerの内部フォルダ（存在しない場所）を探してエラーになります
-os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
+import multiprocessing
 import random
 import time
 
@@ -107,4 +105,5 @@ def main():
 
 
 if __name__ == "__main__":
+    multiprocessing.freeze_support()
     main()

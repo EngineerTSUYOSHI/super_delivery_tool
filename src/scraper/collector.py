@@ -6,7 +6,6 @@ import platform
 import playwright
 import random
 import re
-import subprocess
 import sys
 import time
 
@@ -35,10 +34,11 @@ class SuperDeliveryScraper:
         if not browser_path:
             if self._install_browser():
                 browser_path = self._get_executable_path()
-            
+                logger.info("ブラウザのインストールが完了しました。")
+
         if not browser_path:
             logger.error("ブラウザを特定・インストールできませんでした。終了します。")
-            return
+            sys.exit(1)
 
         # 起動オプション
         launch_kwargs = {
@@ -308,7 +308,6 @@ class SuperDeliveryScraper:
             base_dirs.append(os.path.join(os.path.dirname(playwright.__file__), "driver", "package", ".local-browsers"))
         except:
             pass
-
         for base in base_dirs:
             # 【ここが重要】ファイル名を指定せず、MacOSフォルダ内のファイルをすべて探す
             if system == "Windows":
@@ -318,7 +317,6 @@ class SuperDeliveryScraper:
                 pattern = os.path.join(base, "chromium-*", "**", "Contents", "MacOS", "*")
             
             candidates = glob.glob(pattern, recursive=True)
-            
             # headless_shellを除外し、実際にファイルであるものだけを抽出
             for c in candidates:
                 if os.path.isfile(c) and "headless_shell" not in c:
@@ -327,15 +325,28 @@ class SuperDeliveryScraper:
         return None
     
     def _install_browser(self):
-        logger.info("ブラウザが見つかりません。自動インストールを開始します（数分かかります）...")
+        logger.info("ブラウザが見つかりません。自動インストールを開始します...")
         try:
-            # 顧客の環境でも動くよう、現在の実行環境(sys.executable)からplaywrightを呼び出す
-            subprocess.run(
-                [sys.executable, "-m", "playwright", "install", "chromium"],
-                check=True
-            )
+            from playwright.__main__ import main as playwright_main
+            
+            original_argv = sys.argv
+            # インストール先を標準パスに固定
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
+            sys.argv = ["playwright", "install", "chromium"]
+            
+            try:
+                playwright_main()
+            except SystemExit as e:
+                # Playwrightがsys.exit()を呼んでも、ここで食い止める
+                if e.code != 0:
+                    # 終了コードが0以外（エラー）の場合は例外を再送出
+                    raise
+            finally:
+                sys.argv = original_argv
+                
             logger.info("ブラウザのインストールが完了しました。")
+            time.sleep(1)
             return True
         except Exception as e:
-            logger.error(f"インストールの自動実行に失敗しました: {e}")
+            logger.error(f"インストールの実行に失敗しました: {e}")
             return False
