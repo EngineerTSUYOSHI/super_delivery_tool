@@ -1,8 +1,13 @@
+import glob
 import logging
 import math
 import os
+import platform
+import playwright
 import random
 import re
+import subprocess
+import sys
 import time
 
 from playwright.sync_api import sync_playwright
@@ -21,44 +26,43 @@ class SuperDeliveryScraper:
         self.page = None
 
     def start(self, auth_state=None, headless=True):
-        logger.info("ブラウザを起動しています...")
+        logger.info("ブラウザの準備を開始します...")
+
+        # パスを確認
+        browser_path = self._get_executable_path()
         
-        # 1. ブラウザのパス解決
-        home = os.path.expanduser("~")
-        browser_path = os.path.join(home, "Library/Caches/ms-playwright/chromium_headless_shell-1200/chrome-headless-shell-mac-arm64/chrome-headless-shell")
-        
-        # 2. 起動オプションの集約
+        # なければインストールして再取得
+        if not browser_path:
+            if self._install_browser():
+                browser_path = self._get_executable_path()
+            
+        if not browser_path:
+            logger.error("ブラウザを特定・インストールできませんでした。終了します。")
+            return
+
+        # 起動オプション
         launch_kwargs = {
             "headless": headless,
+            "executable_path": browser_path,
             "args": ["--disable-blink-features=AutomationControlled"]
         }
-        
-        if os.path.exists(browser_path):
-            launch_kwargs["executable_path"] = browser_path
-            logger.info(f"指定されたパスのブラウザを使用します: {browser_path}")
+        logger.info(f"ブラウザを起動します: {browser_path}")
 
-        # 3. Playwrightの開始とブラウザ起動を一つにまとめる
-        # ※ クラスのメンバ変数として保持するため、with構文ではなく.start()を使います
+        # Playwright起動
         self.pw = sync_playwright().start()
         self.browser = self.pw.chromium.launch(**launch_kwargs)
 
-        # 4. コンテキスト（認証情報）の設定
+        # コンテキストとページの設定
         if auth_state and os.path.exists(auth_state):
-            logger.info(f"認証情報を読み込んでいます: {auth_state}")
+            logger.info(f"認証情報を読み込みます: {auth_state}")
             self.context = self.browser.new_context(storage_state=auth_state)
         else:
             self.context = self.browser.new_context()
 
         self.page = self.context.new_page()
-
-        # 5. ボット対策スクリプト
-        self.page.add_init_script(
-            """
-            Object.defineProperty(navigator, 'webdriver', {
-                get: () => false
-            });
-            """
-        )
+        
+        # ボット対策
+        self.page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => false});")
 
     def login(self, user_id, password):
         try:
@@ -286,3 +290,52 @@ class SuperDeliveryScraper:
         """ログイン状態をJSONファイルに保存する"""
         self.context.storage_state(path=file_path)
         logger.info("認証情報を保存しました")
+
+    def _get_executable_path(self):
+
+        home = os.path.expanduser("~")
+        system = platform.system()
+        
+        # 候補となるベースディレクトリを網羅
+        base_dirs = []
+        if system == "Windows":
+            base_dirs.append(os.path.join(os.environ.get("LOCALAPPDATA", ""), "ms-playwright"))
+        else:
+            base_dirs.append(os.path.join(home, "Library/Caches/ms-playwright"))
+
+        # venvや実行ファイル内のパスも追加
+        try:
+            base_dirs.append(os.path.join(os.path.dirname(playwright.__file__), "driver", "package", ".local-browsers"))
+        except:
+            pass
+
+        for base in base_dirs:
+            # 【ここが重要】ファイル名を指定せず、MacOSフォルダ内のファイルをすべて探す
+            if system == "Windows":
+                pattern = os.path.join(base, "chromium-*", "**", "chrome.exe")
+            else:
+                # Macの場合、Contents/MacOS の中にある実行ファイルなら何でも良い
+                pattern = os.path.join(base, "chromium-*", "**", "Contents", "MacOS", "*")
+            
+            candidates = glob.glob(pattern, recursive=True)
+            
+            # headless_shellを除外し、実際にファイルであるものだけを抽出
+            for c in candidates:
+                if os.path.isfile(c) and "headless_shell" not in c:
+                    return c # 最初に見つかった有効なブラウザを返す
+
+        return None
+    
+    def _install_browser(self):
+        logger.info("ブラウザが見つかりません。自動インストールを開始します（数分かかります）...")
+        try:
+            # 顧客の環境でも動くよう、現在の実行環境(sys.executable)からplaywrightを呼び出す
+            subprocess.run(
+                [sys.executable, "-m", "playwright", "install", "chromium"],
+                check=True
+            )
+            logger.info("ブラウザのインストールが完了しました。")
+            return True
+        except Exception as e:
+            logger.error(f"インストールの自動実行に失敗しました: {e}")
+            return False
