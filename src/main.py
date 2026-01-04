@@ -1,4 +1,6 @@
 import os
+# 0は「標準の場所(AppData/Local/ms-playwright)」を指します
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
 import multiprocessing
 import random
 import time
