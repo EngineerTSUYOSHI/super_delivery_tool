@@ -7,8 +7,7 @@ import random
 import re
 import sys
 import time
-
-
+from typing import List, Dict, Optional
 
 import config
 
@@ -16,20 +15,27 @@ logger = logging.getLogger("SD_Scraper")
 
 
 class SuperDeliveryScraper:
-    def __init__(self):
-        self.login_url = "https://www.superdelivery.com/p/do/clickMemberLogin"
-        self.pw = None
+    def __init__(self) -> None:
+        """コンストラクタ"""
+        self.login_url: str = "https://www.superdelivery.com/p/do/clickMemberLogin"
+        self.pw: Optional[str] = None
         self.browser = None
         self.context = None
         self.page = None
 
-    def start(self, auth_state=None, headless=True):
+    def start(self, auth_state: Optional[str] = None, headless: bool = True) -> None:
+        """ブラウザを起動する
+
+        :param auth_state: 認証ファイルパス
+        :param headless: ブラウザを表示するかのフラグ
+        """
         from playwright.sync_api import sync_playwright
+
         logger.info("ブラウザの準備を開始します...")
 
         # パスを確認
         browser_path = self._get_executable_path()
-        
+
         # なければインストールして再取得
         if not browser_path:
             if self._install_browser():
@@ -43,7 +49,7 @@ class SuperDeliveryScraper:
         launch_kwargs = {
             "headless": headless,
             "executable_path": browser_path,
-            "args": ["--disable-blink-features=AutomationControlled"]
+            "args": ["--disable-blink-features=AutomationControlled"],
         }
         logger.info(f"ブラウザを起動します: {browser_path}")
 
@@ -59,11 +65,20 @@ class SuperDeliveryScraper:
             self.context = self.browser.new_context()
 
         self.page = self.context.new_page()
-        
-        # ボット対策
-        self.page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => false});")
 
-    def login(self, user_id, password):
+        # ボット対策
+        self.page.add_init_script(
+            "Object.defineProperty(navigator, 'webdriver', {get: () => false});"
+        )
+
+    def login(self, user_id: str, password: str) -> bool:
+        """ログインを実行する
+
+        :param user_id: ログイン用ユーザID
+        :param password: ログイン用パスワード
+
+        :return: ログイン成功時はTrue、失敗時はFalse
+        """
         try:
             logger.info("ログインを試みています...")
             self.page.goto(self.login_url)
@@ -88,20 +103,24 @@ class SuperDeliveryScraper:
             logger.error(f"An error occurred during login: {e}")
             return False
 
-    def close(self):
-        """リソースの解放。"""
+    def close(self) -> None:
+        """ブラウザを閉じる"""
         if self.browser:
             self.browser.close()
         if self.pw:
             self.pw.stop()
 
-    def get_max_pages(self, first_page_url):
+    def get_max_pages(self, first_page_url: str) -> int:
+        """商品一覧画面の最大ページ数を取得する
+
+        :param first_page_url: 1ページ目のURL
+
+        :return: 最大ページ数
+        """
         self.page.goto(first_page_url)
 
         # 「（全28020件）」というテキストを探して数字だけ抜く
-        total_text = total_text = self.page.locator(
-            r"text=/（全\d+件）/"
-        ).first.inner_text()
+        total_text = self.page.locator(r"text=/（全\d+件）/").first.inner_text()
         # 正規表現で数字だけ取り出す
         total_count = int(re.search(r"\d+", total_text).group())
 
@@ -112,10 +131,16 @@ class SuperDeliveryScraper:
         logger.info(f"総件数: {total_count}件 -> 最大ページ数: {max_pages}")
         return max_pages
 
-    def get_all_product_urls(self, base_url, start_page=1, end_page=10):
-        """
-        指定された開始ページから終了ページまでのURLを収集して返す。
-        デフォルトは 1〜10 ページ。
+    def get_all_product_urls(
+        self, base_url: str, start_page: int = 1, end_page: int = 10
+    ) -> List[str]:
+        """指摘したページ数までの商品一覧画面をスクレイピングし、全ての商品URLを取得する
+
+        :param base_url: 1ページ目のURL（1ページ目のみURLが異なるため）
+        :param start_page: URL取得開始ページ
+        :param end_page: URL取得終了ページ
+
+        :return: 商品詳細URLのリスト
         """
         # 1. サイト上の最大ページ数を取得
         site_max_pages = self.get_max_pages(base_url)
@@ -168,7 +193,13 @@ class SuperDeliveryScraper:
         logger.info(f"URL収集完了: 合計 {len(all_product_urls)} 件を取得しました。")
         return all_product_urls
 
-    def get_product_list(self, list_url):
+    def get_product_list(self, list_url: str) -> List[str]:
+        """一覧ページから商品URLを取得する
+
+        :param list_url: 一覧ページのURL
+
+        :return: 商品URLのリスト
+        """
         logger.info(f"一覧ページに移動中: {list_url}")
         self.page.goto(list_url)
 
@@ -198,7 +229,13 @@ class SuperDeliveryScraper:
         logger.info(f"商品URLを {len(urls)} 件取得しました。")
         return urls
 
-    def scrape_product_detail(self, url):
+    def scrape_product_detail(self, url: str) -> List[Dict[str, str]]:
+        """商品詳細情報をスクレイピングする
+
+        :param url: 商品詳細ページのURL
+
+        :return: 商品詳細情報の辞書
+        """
         for attempt in range(config.MAX_RETRIS):
             try:
                 # wait_until="domcontentloaded" で高速化
@@ -217,7 +254,7 @@ class SuperDeliveryScraper:
                 # h1が出るまで待つ（これが通ればページが正常に表示されている証拠）
                 try:
                     self.page.wait_for_selector("h1", timeout=15000)
-                except:
+                except Exception:
                     logger.warning(f"h1が見つかりません。リトライします。")
                     continue
 
@@ -278,19 +315,32 @@ class SuperDeliveryScraper:
                     return []
         return []  # すべての試行が失敗した場合
 
-    def get_text_safe(self, selector):
+    def get_text_safe(self, selector: str) -> str:
+        """テキストを安全に取得する
+
+        :param selector: HTML要素のセレクタ
+
+        :return: 取得したテキスト
+        """
         try:
             element = self.page.locator(selector).first
             return element.inner_text().strip() if element.count() > 0 else ""
-        except:
+        except Exception:
             return ""
 
-    def save_auth_state(self, file_path="auth_state.json"):
-        """ログイン状態をJSONファイルに保存する"""
+    def save_auth_state(self, file_path: str = "auth_state.json") -> None:
+        """認証情報を保存する
+
+        :param file_path: 保存するファイルパス
+        """
         self.context.storage_state(path=file_path)
         logger.info("認証情報を保存しました")
 
-    def _get_executable_path(self):
+    def _get_executable_path(self) -> Optional[str]:
+        """ブラウザの実行ファイルパスを取得する
+
+        :return: 実行ファイルパス。見つからない場合はNone
+        """
         system = platform.system()
         base_dirs = []
 
@@ -298,20 +348,24 @@ class SuperDeliveryScraper:
             # 【ここを合わせる！】
             base_dirs.append("C:\\playwright-browsers")
             # 念のため、以前の標準パスも残しておく
-            base_dirs.append(os.path.join(os.environ.get("LOCALAPPDATA", ""), "ms-playwright"))
+            base_dirs.append(
+                os.path.join(os.environ.get("LOCALAPPDATA", ""), "ms-playwright")
+            )
         else:
             base_dirs.append(os.path.expanduser("~/Library/Caches/ms-playwright"))
 
         for base in base_dirs:
             if not os.path.exists(base):
                 continue
-            
+
             if system == "Windows":
                 # 指定したフォルダ内を再帰的に検索
                 pattern = os.path.join(base, "chromium-*", "chrome-win64", "chrome.exe")
                 fallback_pattern = os.path.join(base, "**/chrome.exe")
             else:
-                pattern = os.path.join(base, "chromium-*", "**", "Contents", "MacOS", "*")
+                pattern = os.path.join(
+                    base, "chromium-*", "**", "Contents", "MacOS", "*"
+                )
 
             candidates = glob.glob(pattern, recursive=True)
             if not candidates and system == "Windows":
@@ -321,8 +375,12 @@ class SuperDeliveryScraper:
                 if os.path.isfile(c) and "headless_shell" not in c:
                     return c
         return None
-    
-    def _install_browser(self):
+
+    def _install_browser(self) -> bool:
+        """ブラウザをインストールする
+
+        :return: ブラウザのインストールに成功した場合はTrue、失敗した場合はFalse
+        """
         logger.info("ブラウザが見つかりません。自動インストールを開始します...")
         try:
             original_argv = sys.argv
@@ -330,11 +388,14 @@ class SuperDeliveryScraper:
             if platform.system() == "Windows":
                 os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "C:\\playwright-browsers"
             else:
-                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.expanduser("~/Library/Caches/ms-playwright")
+                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.expanduser(
+                    "~/Library/Caches/ms-playwright"
+                )
             sys.argv = ["playwright", "install", "chromium"]
-            
+
             import playwright
             from playwright.__main__ import main as playwright_main
+
             try:
                 playwright_main()
             except SystemExit as e:
@@ -344,7 +405,7 @@ class SuperDeliveryScraper:
                     raise
             finally:
                 sys.argv = original_argv
-                
+
             logger.info("ブラウザのインストールが完了しました。")
             time.sleep(1)
             return True

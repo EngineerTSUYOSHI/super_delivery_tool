@@ -4,8 +4,13 @@ import sys
 from datetime import datetime
 
 
-def setup_logger(output_dir):
-    """コンソールとファイルの両方にログを出力する設定"""
+def setup_logger(output_dir: str) -> logging.Logger:
+    """コンソールとファイルの両方にログを出力する設定。
+
+    :param output_dir: ログファイルを保存するディレクトリのパス。
+
+    :return: 設定されたロガーオブジェクト。
+    """
     logger = logging.getLogger("SD_Scraper")
     logger.setLevel(logging.INFO)
 

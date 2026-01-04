@@ -1,9 +1,8 @@
 import os
-# 0は「標準の場所(AppData/Local/ms-playwright)」を指します
-os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
 import multiprocessing
 import random
 import time
+from typing import List
 
 import pandas as pd
 from dotenv import load_dotenv
@@ -18,7 +17,9 @@ load_dotenv(config.SETTING_FILE)
 # ロガーのセットアップ
 logger = setup_logger(config.TMP_LOG_DIR)
 
-def main():
+
+def main() -> None:
+    """メイン処理を実行する"""
     # ファイル出力先のディレクトリ準備（念のため）
     io_handler.prepare_output_dir(config.OUTPUT_DIR)
 
@@ -27,7 +28,7 @@ def main():
     # 初回はログインが必要なためauth_stateなしでブラウザ起動
     scraper = SuperDeliveryScraper()
     scraper.start(headless=headless)
-    if scraper.login(os.getenv("USER_ID"), os.getenv("PASSWORD")):
+    if scraper.login(os.getenv("USER_ID", "admin"), os.getenv("PASSWORD", "pass")):
         # ログイン後に安定するまで少し待機
         time.sleep(5)
         logger.info("ログインに成功しました。")
@@ -46,7 +47,7 @@ def main():
 
     # ターゲット企業リストを読み込む
     target_str = os.getenv("TARGET_COMPANIES", "")
-    target_list = [t.strip() for t in target_str.split(",") if t.strip()]
+    target_list: List[str] = [t.strip() for t in target_str.split(",") if t.strip()]
 
     try:
         # inputファイルの会社毎にループ処理
