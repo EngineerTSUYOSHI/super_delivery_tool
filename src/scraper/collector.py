@@ -3,13 +3,12 @@ import logging
 import math
 import os
 import platform
-import playwright
 import random
 import re
 import sys
 import time
 
-from playwright.sync_api import sync_playwright
+
 
 import config
 
@@ -25,6 +24,7 @@ class SuperDeliveryScraper:
         self.page = None
 
     def start(self, auth_state=None, headless=True):
+        from playwright.sync_api import sync_playwright
         logger.info("ブラウザの準備を開始します...")
 
         # パスを確認
@@ -298,36 +298,42 @@ class SuperDeliveryScraper:
         # 候補となるベースディレクトリを網羅
         base_dirs = []
         if system == "Windows":
+            # 1. まずは標準のインストール先を絶対優先で追加
             base_dirs.append(os.path.join(os.environ.get("LOCALAPPDATA", ""), "ms-playwright"))
+            # 2. 次に念のためTemp（_MEI）の中も候補に入れる
+            if getattr(sys, 'frozen', False):
+                base_dirs.append(os.path.join(sys._MEIPASS, "playwright", "driver", "package", ".local-browsers"))
         else:
             base_dirs.append(os.path.join(home, "Library/Caches/ms-playwright"))
 
         for base in base_dirs:
-            # 【ここが重要】ファイル名を指定せず、MacOSフォルダ内のファイルをすべて探す
             if system == "Windows":
-                pattern = os.path.join(base, "chromium-*", "**", "chrome.exe")
+                # Windowsのパス形式を確実にヒットさせる
+                pattern = os.path.join(base, "chromium-*", "chrome-win64", "chrome.exe")
+                # もし上記でダメな場合のための広域パターン
+                fallback_pattern = os.path.join(base, "chromium-*", "**", "chrome.exe")
             else:
-                # Macの場合、Contents/MacOS の中にある実行ファイルなら何でも良い
                 pattern = os.path.join(base, "chromium-*", "**", "Contents", "MacOS", "*")
-            
+
             candidates = glob.glob(pattern, recursive=True)
-            # headless_shellを除外し、実際にファイルであるものだけを抽出
+            if not candidates and system == "Windows":
+                candidates = glob.glob(fallback_pattern, recursive=True)
+            
             for c in candidates:
                 if os.path.isfile(c) and "headless_shell" not in c:
-                    return c # 最初に見つかった有効なブラウザを返す
-
+                    return c
         return None
     
     def _install_browser(self):
         logger.info("ブラウザが見つかりません。自動インストールを開始します...")
         try:
-            from playwright.__main__ import main as playwright_main
-            
             original_argv = sys.argv
             # インストール先を標準パスに固定
             os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
             sys.argv = ["playwright", "install", "chromium"]
             
+            import playwright
+            from playwright.__main__ import main as playwright_main
             try:
                 playwright_main()
             except SystemExit as e:
