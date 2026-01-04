@@ -8,7 +8,7 @@ if getattr(sys, "frozen", False):
 else:
     BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 
-# プロジェクトルート (srcの一階層上)
+# プロジェクトルート (srcの一階層上) 
 ROOT_DIR = os.path.dirname(BASE_DIR) if not getattr(sys, "frozen", False) else BASE_DIR
 
 # --- フォルダ構成の設定 ---
@@ -16,11 +16,11 @@ TMP_DIR = os.path.join(ROOT_DIR, "tmp")
 TMP_CSV_DIR = os.path.join(TMP_DIR, "csv")
 TMP_LOG_DIR = os.path.join(TMP_DIR, "log")
 # --- パス関連の設定 ---
-BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-INPUT_FILE = os.path.join(os.path.dirname(BASE_DIR), "input.xlsx")
-OUTPUT_DIR = os.path.join(os.path.dirname(BASE_DIR), "output")
+INPUT_FILE = os.path.join(ROOT_DIR, "input.xlsx")
+OUTPUT_DIR = os.path.join(ROOT_DIR, "output")
 OUTPUT_FILE = os.path.join(OUTPUT_DIR, f"{datetime.now().strftime('%Y%m%d')}.xlsx")
-AUTH_STATE_PATH = os.path.join(BASE_DIR, "auth_state.json")
+SETTING_FILE = os.path.join(ROOT_DIR, "settings.txt")
+AUTH_STATE_PATH = os.path.join(ROOT_DIR, "auth_state.json")
 
 
 # --- 実行時の基本設定 ---
