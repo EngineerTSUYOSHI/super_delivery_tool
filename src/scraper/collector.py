@@ -20,12 +20,29 @@ class SuperDeliveryScraper:
         self.context = None
         self.page = None
 
-    def start(self, auth_state=None):
+    def start(self, auth_state=None, headless=True):
         logger.info("ブラウザを起動しています...")
+        
+        # 1. ブラウザのパス解決
+        home = os.path.expanduser("~")
+        browser_path = os.path.join(home, "Library/Caches/ms-playwright/chromium_headless_shell-1200/chrome-headless-shell-mac-arm64/chrome-headless-shell")
+        
+        # 2. 起動オプションの集約
+        launch_kwargs = {
+            "headless": headless,
+            "args": ["--disable-blink-features=AutomationControlled"]
+        }
+        
+        if os.path.exists(browser_path):
+            launch_kwargs["executable_path"] = browser_path
+            logger.info(f"指定されたパスのブラウザを使用します: {browser_path}")
+
+        # 3. Playwrightの開始とブラウザ起動を一つにまとめる
+        # ※ クラスのメンバ変数として保持するため、with構文ではなく.start()を使います
         self.pw = sync_playwright().start()
-        self.browser = self.pw.chromium.launch(
-            headless=True, args=["--disable-blink-features=AutomationControlled"]
-        )
+        self.browser = self.pw.chromium.launch(**launch_kwargs)
+
+        # 4. コンテキスト（認証情報）の設定
         if auth_state and os.path.exists(auth_state):
             logger.info(f"認証情報を読み込んでいます: {auth_state}")
             self.context = self.browser.new_context(storage_state=auth_state)
@@ -34,13 +51,13 @@ class SuperDeliveryScraper:
 
         self.page = self.context.new_page()
 
-        # 外部ライブラリを使わず、直接「ボットじゃないよ」という証拠を刻む
+        # 5. ボット対策スクリプト
         self.page.add_init_script(
             """
             Object.defineProperty(navigator, 'webdriver', {
                 get: () => false
             });
-        """
+            """
         )
 
     def login(self, user_id, password):
@@ -187,9 +204,9 @@ class SuperDeliveryScraper:
                 # メンテナンス画面が出た場合の即時判定
                 if "メンテナンス中" in self.page.content():
                     logger.warning(
-                        f"制限検知。{config.MAINTENANCE_WAIT}秒待機してリトライします({attempt+1}/{config.MAX_RETRIS})"
+                        f"制限検知。{config.WAIT_TIME_MAINTENANCE}秒待機してリトライします({attempt+1}/{config.MAX_RETRIS})"
                     )
-                    time.sleep(config.MAINTENANCE_WAIT)
+                    time.sleep(config.WAIT_TIME_MAINTENANCE)
                     continue  # ループの先頭に戻ってリトライ
 
                 # --- ここからが正常時の処理（ループを抜けるための成功ルート） ---
