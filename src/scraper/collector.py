@@ -291,34 +291,32 @@ class SuperDeliveryScraper:
         logger.info("認証情報を保存しました")
 
     def _get_executable_path(self):
-
-        home = os.path.expanduser("~")
         system = platform.system()
-        
-        # 候補となるベースディレクトリを網羅
         base_dirs = []
+
         if system == "Windows":
-            # 1. まずは標準のインストール先を絶対優先で追加
+            # 【ここを合わせる！】
+            base_dirs.append("C:\\playwright-browsers")
+            # 念のため、以前の標準パスも残しておく
             base_dirs.append(os.path.join(os.environ.get("LOCALAPPDATA", ""), "ms-playwright"))
-            # 2. 次に念のためTemp（_MEI）の中も候補に入れる
-            if getattr(sys, 'frozen', False):
-                base_dirs.append(os.path.join(sys._MEIPASS, "playwright", "driver", "package", ".local-browsers"))
         else:
-            base_dirs.append(os.path.join(home, "Library/Caches/ms-playwright"))
+            base_dirs.append(os.path.expanduser("~/Library/Caches/ms-playwright"))
 
         for base in base_dirs:
+            if not os.path.exists(base):
+                continue
+            
             if system == "Windows":
-                # Windowsのパス形式を確実にヒットさせる
+                # 指定したフォルダ内を再帰的に検索
                 pattern = os.path.join(base, "chromium-*", "chrome-win64", "chrome.exe")
-                # もし上記でダメな場合のための広域パターン
-                fallback_pattern = os.path.join(base, "chromium-*", "**", "chrome.exe")
+                fallback_pattern = os.path.join(base, "**/chrome.exe")
             else:
                 pattern = os.path.join(base, "chromium-*", "**", "Contents", "MacOS", "*")
 
             candidates = glob.glob(pattern, recursive=True)
             if not candidates and system == "Windows":
                 candidates = glob.glob(fallback_pattern, recursive=True)
-            
+
             for c in candidates:
                 if os.path.isfile(c) and "headless_shell" not in c:
                     return c
