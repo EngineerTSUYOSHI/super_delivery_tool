@@ -34,7 +34,6 @@ class SuperDeliveryScraper:
         if not browser_path:
             if self._install_browser():
                 browser_path = self._get_executable_path()
-                logger.info("ブラウザのインストールが完了しました。")
 
         if not browser_path:
             logger.error("ブラウザを特定・インストールできませんでした。終了します。")
@@ -303,11 +302,6 @@ class SuperDeliveryScraper:
         else:
             base_dirs.append(os.path.join(home, "Library/Caches/ms-playwright"))
 
-        # venvや実行ファイル内のパスも追加
-        try:
-            base_dirs.append(os.path.join(os.path.dirname(playwright.__file__), "driver", "package", ".local-browsers"))
-        except:
-            pass
         for base in base_dirs:
             # 【ここが重要】ファイル名を指定せず、MacOSフォルダ内のファイルをすべて探す
             if system == "Windows":
