@@ -1,4 +1,5 @@
 import os
+os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
 import multiprocessing
 import random
 import time
@@ -108,5 +109,21 @@ def main() -> None:
 
 
 if __name__ == "__main__":
+    import sys
     multiprocessing.freeze_support()
+    os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
+    original_argv = sys.argv
+    sys.argv = ["playwright", "install", "chromium"]
+    import playwright
+    from playwright.__main__ import main as playwright_main
+
+    try:
+        playwright_main()
+    except SystemExit as e:
+        # Playwrightがsys.exit()を呼んでも、ここで食い止める
+        if e.code != 0:
+            # 終了コードが0以外（エラー）の場合は例外を再送出
+            raise
+    finally:
+        sys.argv = original_argv
     main()
