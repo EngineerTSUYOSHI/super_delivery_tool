@@ -385,12 +385,13 @@ class SuperDeliveryScraper:
         try:
             original_argv = sys.argv
             # インストール先を標準パスに固定
-            if platform.system() == "Windows":
-                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "C:\\playwright-browsers"
-            else:
-                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.expanduser(
-                    "~/Library/Caches/ms-playwright"
-                )
+            # if platform.system() == "Windows":
+            #     # os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "C:\\playwright-browsers"
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
+            # else:
+            #     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.expanduser(
+            #         "~/Library/Caches/ms-playwright"
+            #     )
             sys.argv = ["playwright", "install", "chromium"]
 
             import playwright
