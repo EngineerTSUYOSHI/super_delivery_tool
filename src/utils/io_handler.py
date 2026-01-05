@@ -88,7 +88,7 @@ def cleanup_old_logs(log_dir: str, days: int = 7) -> None:
     now = time.time()
     cutoff = now - (days * 86400)
     
-    # 💡 修正ポイント：特定のパターン（*.log）を指定せず、全ファイルを取得
+    # 全ファイルを取得
     files = glob.glob(os.path.join(log_dir, "*"))
     
     for f in files:
@@ -97,10 +97,10 @@ def cleanup_old_logs(log_dir: str, days: int = 7) -> None:
             continue
 
         # 最終更新日時がカットオフラインより前なら削除
-        if os.stat(f).st_mtime < cutoff:
+        if os.stat(f).st_ctime < cutoff:
             try:
-                logger.info(f"古いファイルを削除しました: {os.path.basename(f)}")
                 os.remove(f)
+                logger.info(f"古いファイルを削除しました: {os.path.basename(f)}")
             except Exception as e:
                 # 使用中のファイル（今日のログなど）は削除できないので、エラーを無視または警告に留める
                 logger.warning(f"ファイルの削除に失敗しました（使用中の可能性があります）: {os.path.basename(f)}")
