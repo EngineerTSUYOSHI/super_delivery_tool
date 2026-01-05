@@ -80,16 +80,27 @@ def remove_temp_csv(output_dir: str) -> None:
         except Exception as e:
             logger.error(f"一時ファイル {f} の削除に失敗しました: {e}")
 
-
 def cleanup_old_logs(log_dir: str, days: int = 7) -> None:
-    """古いログを削除する
+    """古いファイルを名前や拡張子に関わらず全て削除する"""
+    if not os.path.exists(log_dir):
+        return
 
-    :param log_dir: ログファイルが保存されているディレクトリ。
-    :param days: 削除対象の古いログの基準日数。
-    """
     now = time.time()
-    files = glob.glob(os.path.join(log_dir, "*.log*"))
+    cutoff = now - (days * 86400)
+    
+    # 💡 修正ポイント：特定のパターン（*.log）を指定せず、全ファイルを取得
+    files = glob.glob(os.path.join(log_dir, "*"))
+    
     for f in files:
-        if os.stat(f).st_mtime < now - (days * 86400):
-            logger.info(f"古いログを削除: {f}")
-            os.remove(f)
+        # ディレクトリ（サブフォルダ）は念のため除外して、ファイルのみを対象にする
+        if not os.path.isfile(f):
+            continue
+
+        # 最終更新日時がカットオフラインより前なら削除
+        if os.stat(f).st_mtime < cutoff:
+            try:
+                logger.info(f"古いファイルを削除しました: {os.path.basename(f)}")
+                os.remove(f)
+            except Exception as e:
+                # 使用中のファイル（今日のログなど）は削除できないので、エラーを無視または警告に留める
+                logger.warning(f"ファイルの削除に失敗しました（使用中の可能性があります）: {os.path.basename(f)}")
