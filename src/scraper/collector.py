@@ -384,14 +384,14 @@ class SuperDeliveryScraper:
         logger.info("ブラウザが見つかりません。自動インストールを開始します...")
         try:
             original_argv = sys.argv
-            # インストール先を標準パスに固定
-            # if platform.system() == "Windows":
-            #     # os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "C:\\playwright-browsers"
-            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"
-            # else:
-            #     os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.expanduser(
-            #         "~/Library/Caches/ms-playwright"
-            #     )
+            # インストール先を標準パスに固定。
+            # os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"を指定してもtmpファイルに保存して毎回消えるので諦める
+            if platform.system() == "Windows":
+                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "C:\\playwright-browsers"
+            else:
+                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.expanduser(
+                    "~/Library/Caches/ms-playwright"
+                )
             sys.argv = ["playwright", "install", "chromium"]
 
             import playwright
