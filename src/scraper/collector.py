@@ -345,35 +345,41 @@ class SuperDeliveryScraper:
         base_dirs = []
 
         if system == "Windows":
-            # 【ここを合わせる！】
+            # 優先パス
             base_dirs.append("C:\\playwright-browsers")
-            # 念のため、以前の標準パスも残しておく
-            base_dirs.append(
-                os.path.join(os.environ.get("LOCALAPPDATA", ""), "ms-playwright")
-            )
+            # 標準パス (LOCALAPPDATA)
+            local_appdata = os.environ.get("LOCALAPPDATA")
+            if local_appdata:
+                base_dirs.append(os.path.join(local_appdata, "ms-playwright"))
+            # USERPROFILE (念のため)
+            user_profile = os.environ.get("USERPROFILE")
+            if user_profile:
+                base_dirs.append(os.path.join(user_profile, "AppData", "Local", "ms-playwright"))
         else:
             base_dirs.append(os.path.expanduser("~/Library/Caches/ms-playwright"))
 
+        logger.info(f"ブラウザの検索を開始します (システム: {system})")
         for base in base_dirs:
             if not os.path.exists(base):
                 continue
 
+            logger.info(f"  検索中: {base}")
             if system == "Windows":
-                # 指定したフォルダ内を再帰的に検索
-                pattern = os.path.join(base, "chromium-*", "chrome-win64", "chrome.exe")
-                fallback_pattern = os.path.join(base, "**/chrome.exe")
+                # chrome-win か chrome-win64 のどちらかにある可能性が高い
+                # より確実に探すために、再帰的に chrome.exe を探す
+                pattern = os.path.join(base, "chromium-*", "**", "chrome.exe")
             else:
                 pattern = os.path.join(
                     base, "chromium-*", "**", "Contents", "MacOS", "*"
                 )
 
             candidates = glob.glob(pattern, recursive=True)
-            if not candidates and system == "Windows":
-                candidates = glob.glob(fallback_pattern, recursive=True)
-
             for c in candidates:
+                # headless_shell ではなく通常の chrome を優先
                 if os.path.isfile(c) and "headless_shell" not in c:
                     return c
+        
+        logger.warning("ブラウザの実行ファイルが見つかりませんでした。")
         return None
 
     def _install_browser(self) -> bool:
@@ -384,14 +390,16 @@ class SuperDeliveryScraper:
         logger.info("ブラウザが見つかりません。自動インストールを開始します...")
         try:
             original_argv = sys.argv
-            # インストール先を標準パスに固定。
-            # os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "0"を指定してもtmpファイルに保存して毎回消えるので諦める
+            
+            # インストール先のパスを決定
             if platform.system() == "Windows":
-                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = "C:\\playwright-browsers"
+                install_path = "C:\\playwright-browsers"
             else:
-                os.environ["PLAYWRIGHT_BROWSERS_PATH"] = os.path.expanduser(
-                    "~/Library/Caches/ms-playwright"
-                )
+                install_path = os.path.expanduser("~/Library/Caches/ms-playwright")
+            
+            os.environ["PLAYWRIGHT_BROWSERS_PATH"] = install_path
+            logger.info(f"インストール先: {install_path}")
+            
             sys.argv = ["playwright", "install", "chromium"]
 
             import playwright
@@ -402,7 +410,7 @@ class SuperDeliveryScraper:
             except SystemExit as e:
                 # Playwrightがsys.exit()を呼んでも、ここで食い止める
                 if e.code != 0:
-                    # 終了コードが0以外（エラー）の場合は例外を再送出
+                    logger.error(f"Playwrightのインストールコマンドがエラー終了しました (Exit Code: {e.code})")
                     raise
             finally:
                 sys.argv = original_argv
@@ -410,6 +418,11 @@ class SuperDeliveryScraper:
             logger.info("ブラウザのインストールが完了しました。")
             time.sleep(1)
             return True
-        except Exception as e:
-            logger.error(f"インストールの実行に失敗しました: {e}")
+        except BaseException as e:
+            logger.error(f"インストールの実行中に重大なエラーが発生しました: {e}")
+            logger.error("手動でのインストールを試みてください：")
+            logger.error("1. コマンドプロンプトを開く")
+            if platform.system() == "Windows":
+                logger.error(f"2. set PLAYWRIGHT_BROWSERS_PATH=C:\\playwright-browsers")
+            logger.error(f"3. playwright install chromium")
             return False
