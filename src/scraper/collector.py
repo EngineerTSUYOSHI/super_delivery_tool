@@ -282,14 +282,9 @@ class SuperDeliveryScraper:
                     model_number = model_match.group(1) if model_match else ""
                     name2 = name2_raw.split("（")[0].strip()
 
-                    # --- 卸価格の取得（修正されたパス） ---
                     wholesale_price = "未取得"
-
-                    # 行内、または直後の要素から価格を探す
-                    # ログイン済みなら .td-price02 などのクラスがあるはず
-                    price_locator = row.locator(
-                        'xpath=./following-sibling::tr//td[contains(@class, "td-price02")] | .//span[contains(@class, "maker-wholesale-set-price")] | .//td[contains(@class, "td-price02")]'
-                    ).first
+                    # 卸価格を取得
+                    price_locator = row.locator('.maker-wholesale-price td.td-price02').first
 
                     if price_locator.count() > 0:
                         price_raw = price_locator.text_content()
